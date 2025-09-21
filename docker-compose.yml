@@ -1,0 +1,77 @@
+# Define all the services (containers) that make up your application.
+services:
+  
+  # 1. The Backend Service (Flask + Gunicorn)
+  backend:
+    # Build the Docker image from the Dockerfile located in the './backend' directory.
+    build: ./backend
+    # Give the container a friendly name.
+    container_name: omr-backend
+    # Automatically restart the container unless it is explicitly stopped.
+    restart: unless-stopped
+    # Load environment variables from the .env file in the backend directory.
+    env_file:
+      - ./backend/.env
+    # Do not expose any ports to the host machine; Traefik will handle all access.
+    # We add this to be explicit, though it's the default behavior.
+    expose:
+      - 8000
+    # Connect this service to our custom network.
+    networks:
+      - webnet
+    # Labels for Traefik to automatically discover and configure this service.
+    labels:
+      - "traefik.enable=true" # Enable Traefik for this service.
+      - "traefik.http.routers.backend.rule=Host(`api.localhost`)" # loute traffic for 'api.localhost'.
+      - "traefik.http.routers.backend.entrypoints=web" # Use the 'web' entrypoint (port 80).
+      - "traefik.http.services.backend.loadbalancer.server.port=8000" # Tell Traefik the service's internal port.
+
+  # 2. The Frontend Service (Next.js)
+  frontend:
+    # Build the Docker image from the Dockerfile in the './frontend' directory.
+    build: ./frontend
+    container_name: omr-frontend
+    restart: unless-stopped
+    # Pass an environment variable to the Next.js app so it knows the backend API URL.
+    # The 'NEXT_PUBLIC_' prefix makes it available in the browser.
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api.localhost/grade
+    expose:
+      - 3000
+    networks:
+      - webnet
+    # Labels for Traefik to route traffic to the frontend.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`localhost`)" # Route traffic for 'localhost'.
+      - "traefik.http.routers.frontend.entrypoints=web"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+  # 3. The Reverse Proxy (Traefik)
+  traefik:
+    # Use the official Traefik image.
+    image: traefik:v2.11
+    container_name: traefik-proxy
+    restart: unless-stopped
+    # These command-line arguments configure Traefik.
+    command:
+      - "--api.insecure=true" # Enable the Traefik dashboard (for debugging)
+      - "--providers.docker=true" # Enable the Docker provider to watch for containers.
+      - "--providers.docker.exposedbydefault=false" # Only expose containers with 'traefik.enable=true' label.
+      - "--entrypoints.web.address=:80" # Define an entrypoint named 'web' on port 80.
+    # Expose ports to the host machine.
+    ports:
+      - "80:80"   # The HTTP port for web traffic.
+      - "8080:8080" # The port for the Traefik dashboard.
+    # Mount the Docker socket to allow Traefik to listen to Docker events (e.g., container start/stop).
+    # ':ro' makes it read-only for better security.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - webnet
+
+# Define the custom network.
+networks:
+  webnet:
+    # Use the default bridge driver.
+    driver: bridge
